@@ -1,3 +1,48 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as Blob;
+
+    if (!file) {
+      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+    }
+
+    // 1. Prepare data for OCR.space API
+    const ocrFormData = new FormData();
+    ocrFormData.append('file', file);
+    ocrFormData.append('language', 'eng');
+    ocrFormData.append('isOverlayRequired', 'false');
+    ocrFormData.append('FileType', '.Auto');
+    ocrFormData.append('scale', 'true'); // Improves accuracy for printed invoices
+
+    // Use the free community key
+    const apiKey = process.env.OCR_SPACE_API_KEY || 'K87439268888957'; 
+
+    const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
+      method: 'POST',
+      headers: { 'apikey': apiKey },
+      body: ocrFormData,
+    });
+
+    const ocrData = await ocrResponse.json();
+
+    if (ocrData.IsErroredOnProcessing) {
+      return NextResponse.json({ error: ocrData.ErrorMessage }, { status: 500 });
+    }
+
+    const parsedText = ocrData.ParsedResults?.[0]?.ParsedText || '';
+
+    // 2. Extract specific logistics fields using state-based parsing
+    const logisticsData = parseInvoiceText(parsedText);
+
+    return NextResponse.json({ success: true, data: logisticsData });
+  } catch (error) {
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
 function parseInvoiceText(text: string) {
   // Split into individual lines and remove empty blank lines
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -9,10 +54,8 @@ function parseInvoiceText(text: string) {
   let forcedDeliveryDate = '';
   const rightSideColumns: Array<{ rawRow: string; styleMatched: string }> = [];
 
-  // State flags to track where the parser is on the page
   let readingDeliveryInstructions = false;
 
-  // Regex patterns
   const phoneRegex = /(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}/;
   const dateRegex = /\b(?:\d{1,2}[-/(]\d{1,2}[-/(]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4})\b/i;
 
@@ -24,10 +67,9 @@ function parseInvoiceText(text: string) {
       orderNumber = line.match(/(?:order|invoice|inv)\s*(?:num|\b#|no\.?)?\s*:?\s*(\d+)/i)?.[1] || '';
     }
 
-    // 2. Phone Number & Company Name (Company is directly below Phone)
+    // 2. Phone Number & Company Name
     if (!phoneNumber && phoneRegex.test(line)) {
       phoneNumber = line.match(phoneRegex)?.[0] || '';
-      // Grab the very next line as the Company Name, assuming it's under AR Address
       if (i + 1 < lines.length) {
         companyName = lines[i + 1];
       }
@@ -36,34 +78,32 @@ function parseInvoiceText(text: string) {
     // 3. Trigger Delivery Instructions Block
     if (/delivery instructions/i.test(line)) {
       readingDeliveryInstructions = true;
-      continue; // Skip to the next line to start recording
+      continue; 
     }
 
     if (readingDeliveryInstructions) {
       // Stop recording if we hit standard table headers or line items
-      if (/qty|item|description|amount|total/i.test(line) || /Caymon|Colonist|Carrara|Berkeley/i.test(line)) {
+      if (/qty|item|description|amount|total|product/i.test(line) || /Caymon|Colonist|Carrara|Berkeley|Weiser|Schlage|MDF/i.test(line)) {
         readingDeliveryInstructions = false;
       } else {
-        // We are inside the delivery instructions block. Look for a date.
         const dateMatch = line.match(dateRegex);
         if (dateMatch) {
           forcedDeliveryDate = dateMatch[0];
-        } else {
-          // If it is not a date, it is part of the address. Append it cleanly.
+        } else if (!/DEL-/i.test(line)) {
           deliveryAddress += (deliveryAddress ? ", " : "") + line;
         }
       }
     }
 
     // 4. Right Side Columns (Line Items)
-    // To grab the entire row accurately across all columns, we lock onto your known inventory styles
-    const doorStyles = ['Caymon', 'Colonist', 'Carrara', 'Berkeley'];
-    for (const style of doorStyles) {
-      if (new RegExp(style, 'i').test(line)) {
+    const productKeywords = ['Caymon', 'Colonist', 'Carrara', 'Berkeley', 'Weiser', 'Schlage', 'MDF', 'Baseboard', 'Casing'];
+    for (const keyword of productKeywords) {
+      if (new RegExp(keyword, 'i').test(line)) {
         rightSideColumns.push({
-          rawRow: line, // Captures the entire horizontal string (Qty, Size, Price, etc.)
-          styleMatched: style
+          rawRow: line,
+          styleMatched: keyword
         });
+        break; // Stop checking keywords for this line once one matches
       }
     }
   }
@@ -76,5 +116,5 @@ function parseInvoiceText(text: string) {
     forcedDeliveryDate,
     rightSideColumns,
     rawTextPreview: text.substring(0, 500)
-  };
+  }
 }
