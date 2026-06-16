@@ -1,3 +1,4 @@
+// Force UI Update - Clean Next.js Upload Component
 'use client';
 
 import { useState } from 'react';
