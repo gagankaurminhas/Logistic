@@ -1,4 +1,3 @@
-// Force UI Update - Clean Next.js Upload Component
 'use client';
 
 import { useState } from 'react';
@@ -42,6 +41,11 @@ export default function Home() {
     }
   };
 
+  // Pre-calculate the button CSS to avoid copy-paste backtick errors
+  const buttonClass = !file || loading 
+    ? "mt-6 w-full py-4 px-4 rounded-xl text-white font-bold text-lg transition-all bg-slate-300 cursor-not-allowed"
+    : "mt-6 w-full py-4 px-4 rounded-xl text-white font-bold text-lg transition-all bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5";
+
   return (
     <main className="min-h-screen bg-slate-50 p-8 flex flex-col items-center font-sans">
       <div className="max-w-3xl w-full space-y-8 mt-12">
@@ -64,7 +68,7 @@ export default function Home() {
           <button
             onClick={handleUpload}
             disabled={!file || loading}
-            className={mt-6 w-full py-4 px-4 rounded-xl text-white font-bold text-lg transition-all ${!file || loading ? 'bg-slate-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5'}}
+            className={buttonClass}
           >
             {loading ? 'Processing Document via OCR...' : 'Process Invoice'}
           </button>
